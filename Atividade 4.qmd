@@ -1,0 +1,425 @@
+---
+title: "Concentração Média de PM2,5 no RS entre o CAMS e Von Donkelar"
+format: html
+editor: visual
+---
+
+```{r Bibliotecas, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+
+
+library(tseries)
+library(BlandAltmanLeh)
+library(tidyverse)
+library(lubridate)
+#library(dplyr)
+library(geobr)
+#library(ggplot2)
+library(sf)
+library(tmap)
+library(readxl)
+library(irr)
+```
+
+```{r Dados CAMS, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+
+# Carregar Base de dados
+dados=read.csv("PM2.5_diario_2023.csv")
+#names(dados)
+dados$Data=ymd(dados$Date)
+dados$mes=month(dados$Data)
+dados$ano=year(dados$Data)
+dados$wday=weekdays(dados$Data)
+
+dados$UF=substr(dados$Cod,1,2)
+# table(dados$UF)
+# table(dados$mes)
+
+#Subseta(Seleciona) os dados com apenas quem tem UF == 43
+rs=subset(dados,dados$UF==43)
+
+
+#agrupa por mes
+rsmes=rs%>%
+  group_by(Cod,mes)%>%
+  summarise(pm2.5=mean(PM2.5,na.rm=T))
+
+
+#agrupa por ano
+rsano=rsmes%>%
+  group_by(Cod)%>%
+  summarise(pm2.5=mean(pm2.5,na.rm=T))
+
+#agrupa por UF
+rsUF=rsmes%>%
+  group_by(mes)%>%
+  summarise(pm2.5=mean(pm2.5,na.rm=T))
+
+
+
+
+```
+
+```{r Dados Von Donkelar,include=FALSE}
+
+rs.donkelar = read_excel("dados_completos_consolidado_donkelar.xlsx")
+
+rs.donkelar = rs.donkelar %>% 
+  filter(SIGLA_UF == 43)
+
+rs.donk.reduzido = rs.donkelar %>% 
+  select(Mes,Media_PM25)
+
+rs.donk.reduzido = rs.donk.reduzido %>% 
+  rename(mes = Mes,
+         pm2.5 = Media_PM25 )
+
+rs.donk.ano = rs.donkelar %>% 
+  select(CD_MUN,Mes,Media_PM25)
+
+rsmes$fonte = "CAMS"
+rs.donk.reduzido$fonte = "Von Donkelar"
+rsano$fonte = "CAMS"
+rs.donk.ano$fonte = "Von Donkelar"
+
+
+
+
+# agregado das duas bases de satelite por mes
+rs.agregado =rbind(rsmes,rs.donk.reduzido)
+
+
+
+rs.agregado.2 = left_join(x = rsano,y = rs.donk.ano,by = c("Cod"="CD_MUN"))
+
+```
+
+### Verificando normalidade dos dados
+
+#### Interpretação geral:
+
+p-valor \< 0.05 → rejeita normalidade (distribuição não é normal)
+
+p-valor ≥ 0.05 → dados podem ser considerados normais
+
+```{r}
+jarque.bera.test(rsmes$pm2.5)
+```
+
+Pelo p-valor `r jarque.bera.test(rsmes$pm2.5)$p.value` , há indicios de que os dados nao seguem uma distribuição normal.
+
+```{r echo=FALSE}
+hist(rsmes$pm2.5, breaks = 30, main = "Histograma", xlab = "x")
+qqnorm(rsmes$pm2.5); qqline(rsmes$pm2.5, col = "red")
+```
+
+### Grafico de Dispersão entre CAMS e o Von Donkelar
+
+```{r}
+
+
+ggplot(rs.agregado.2, aes(x = pm2.5, y = Media_PM25)) +
+  geom_point(color = "#1f77b4", size = 3, alpha = 0.8) +
+  geom_smooth(method = "lm", se = FALSE, color = "darkred") +
+  labs(
+    title = "Comparação de PM2.5: CAMS vs. Von Donkelar",
+    x = "PM2.5 - CAMS (µg/m³)",
+    y = "PM2.5 - Von Donkelar (µg/m³)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(hjust = 0.5)
+  )
+
+```
+
+### Boxplot
+
+#### CAMS
+
+Para avaliar a distribuição dos valores em cada mês.
+
+```{r echo=FALSE}
+ggplot(rsmes,aes(x=factor(mes),y=pm2.5))+
+  geom_boxplot()
+
+
+```
+
+#### Von Donkelar
+
+```{r echo=FALSE}
+ggplot(rs.donk.reduzido,aes(x=factor(mes),y=pm2.5))+
+  geom_boxplot()
+
+
+```
+
+#### CAMS x Von Donkelar
+
+```{r echo=FALSE}
+
+ggplot(rs.agregado, aes(x = factor(mes), y = pm2.5, fill = fonte)) +
+  geom_boxplot(position = position_dodge(0.8)) +
+  labs(title = "Boxplot por mês - comparação entre Satélites",
+       x = "Mês", y = "pm2.5") +
+  theme_minimal() +
+  scale_fill_manual(values = c("CAMS" = "#1f77b4", "Von Donkelar" = "#ff7f0e"))+
+  labs(fill="Satélite",subtitle = "ano de 2023")
+
+
+```
+
+### Grafico de Linhas
+
+Para visualizar a evolução ao longo do ano.
+
+```{r echo=FALSE}
+# Agrega a base
+rs.plot <- rs.agregado %>% 
+  group_by(fonte, mes) %>% 
+  summarise(media = mean(pm2.5), .groups = "drop")
+
+# Calcula a média geral para a linha verde
+media.geral <- rs.plot %>% 
+  group_by(mes) %>% 
+  summarise(media = mean(media), .groups = "drop") %>%
+  mutate(fonte = "Média Geral")  # fonte fictícia para entrar na legenda
+
+# Junta os dados
+rs.plot.total <- bind_rows(rs.plot, media.geral)
+
+# Gráfico
+ggplot(rs.plot.total, aes(x = mes, y = media, color = fonte)) +
+  geom_line(data = rs.plot, size = 1.2) +               # linhas por fonte real
+  geom_smooth(data = rs.plot, se = FALSE) +             # suavização por fonte real
+  geom_smooth(data = media.geral, se = TRUE, size = 1.2,alpha = 0.15,linetype = 8) +  # linha verde interpolada
+  geom_point(data = rs.plot, size = 2) +                # pontos por fonte real
+  scale_color_manual(
+    values = c("CAMS" = "red", "Von Donkelar" = "deepskyblue3", "Média Geral" = "green")
+  ) +
+  scale_x_continuous(breaks = 1:12) +
+  labs(
+    title = "Série Temporal de PM2.5 por Fonte",
+    x = "Mês",
+    y = "PM2.5 médio (µg/m³)",
+    color = "Fonte"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(hjust = 0.5)
+  )
+
+
+
+```
+
+A banda de confiança de confiança é da Média Geral. Média Geral é definida pela média entre o CAMS e Von Donkelar mensalmente.
+
+#### Grafico de Band-Altman
+
+Cada mes de todos os municipio
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+bland.altman.plot(rs.agregado.2$pm2.5,rs.agregado.2$Media_PM25,
+                  main = "Gráfico de Bland-Altman",
+                  xlab = "Média",
+                  ylab = "Diferença")
+
+```
+
+Group by para todos os municipio
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+rs.agregado.2.mensal = rs.agregado.2 %>% 
+  group_by(Cod) %>% 
+    summarise(mensal.cams = mean(pm2.5),
+              mensal.VonDonk = mean(Media_PM25))
+bland.altman.plot(rs.agregado.2.mensal$mensal.cams,rs.agregado.2.mensal$mensal.VonDonk,
+                  main = "Gráfico de Bland-Altman",
+                  xlab = "Média",
+                  ylab = "Diferença")
+
+
+```
+
+#### teste pareado
+
+-   Se p \< 0.05, você rejeita H₀ → há evidência de diferença entre os métodos.
+-   Se p ≥ 0.05, você não rejeita H₀ → não há evidência de diferença média.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+var.test(rs.agregado.2.mensal$mensal.cams,rs.agregado.2.mensal$mensal.VonDonk)
+z= t.test(rs.agregado.2.mensal$mensal.cams,rs.agregado.2.mensal$mensal.VonDonk,paired = T,var.equal = F)
+z$p.value
+
+```
+
+Pelo p-valor de **`r z$p.value`** mostra que há diferença entre os métodos.
+
+#### Correlação
+
+```{r}
+z = icc(data.frame(rs.agregado.2.mensal$mensal.cams,rs.agregado.2.mensal$mensal.VonDonk), model = "twoway", type = "agreement")
+z
+```
+
+Valores de referencia para o ICC:
+
+-   0,00 a 0,39 : Fraca
+
+-   0,40 a 0,59 : Moderada
+
+-   0,60 a 0,74 : Boa
+
+-   0,75 a 1,00 : Excelente
+
+Com os dados do teste temos que o **`r z$value`** representando uma correlação fraca entre os metodos, isto é, pouca correlação entre os dados dos satélites.
+
+## MAPAS
+
+#### CAMS
+
+```{r include=FALSE}
+
+
+
+# map=read_municipality(
+#   code_muni = "43",
+#   year = 2022,
+#   simplified = TRUE,
+#   showProgress = TRUE
+# )
+
+map=read_sf("RS_Municipios_2024.shp")
+rsano$Cod=as.character(rsano$Cod)
+
+map=left_join(map,rsano,join_by("CD_MUN"=="Cod"))
+
+
+
+
+#Transformando em uma geometria valida
+rs = st_make_valid(x = map)
+
+rs = rs %>% 
+  select(pm2.5,everything())
+
+
+## st_make_valid - transforma uma geometria invalida em uma valida
+#Argumentos:
+#x - um objeto da classe sf
+
+#Melhorando o grafico
+rs = rs %>% 
+  #mutate(nome_vendas = str_c(EBAIRRNOME, " - ", num.vendas)) %>% 
+  mutate("PM2.5_Médio" = str_c(NM_MUN, " - ", paste0("PM2,5 Médio : ",round(pm2.5,5))))
+
+
+
+mapa <- tm_shape(rs) +
+  tm_polygons(
+    fill = "pm2.5",
+    fill.scale = tm_scale(
+      breaks = quantile(rs$pm2.5, probs = seq(0, 1, 0.1), na.rm = TRUE),
+      values = "Greens"
+    ),
+    fill.legend = tm_legend(title = "Concentração média \nde PM2,5"),
+    id = "PM2.5_Médio"
+  ) +
+  tm_borders(lwd = 0.75, lty = "solid")
+
+
+## tm_shape - cria um elemento tmap que especifica um objeto espacial
+## tm_fill - cria um elemento tmap que desenha e preenche o mapa
+#Argumentos:
+#shp - um objeto da classe sf
+#col - a variavel/atributo que deseja plotar
+#palette - a paleta de cores
+#title - Nome que deseja mostrar no titulo da legenda
+## tm_borders - desenha as bordas que separam os poligonos
+#Argumentos:
+#lwd - espessura da borda
+#lty - tipo de linha
+
+
+
+```
+
+### Mapa estático
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+mapa
+```
+
+#### Von Donkelar
+
+```{r include=FALSE}
+
+map=read_sf("RS_Municipios_2024.shp")
+
+
+rs.donk.ano=rs.donkelar %>% 
+  group_by(CD_MUN) %>% 
+  summarise(Media_PM25 = mean(Media_PM25,na.rm = T))
+
+rs.donk.ano$CD_MUN = as.character(rs.donk.ano$CD_MUN)
+
+
+
+map2=left_join(map,rs.donk.ano,join_by("CD_MUN"=="CD_MUN"))
+
+
+
+
+#Transformando em uma geometria valida
+rsmapdok = st_make_valid(x = map2)
+
+rsmapdok = rsmapdok %>% 
+  select(Media_PM25,everything())
+
+
+## st_make_valid - transforma uma geometria invalida em uma valida
+#Argumentos:
+#x - um objeto da classe sf
+
+#Melhorando o grafico
+rsmapdok = rsmapdok %>% 
+  #mutate(nome_vendas = str_c(EBAIRRNOME, " - ", num.vendas)) %>% 
+  mutate("PM2.5_Médio" = str_c(NM_MUN, " - ", paste0("PM2,5 Médio : ",round(Media_PM25,5))))
+
+# Criando o mapa
+mapa2 <- tm_shape(rsmapdok) +
+  tm_polygons(
+    fill = "Media_PM25",
+    fill.scale = tm_scale(
+      breaks = quantile(rsmapdok$Media_PM25, probs = seq(0, 1, 0.1), na.rm = TRUE),
+      values = "orange"
+    ),
+    fill.legend = tm_legend(title = "Concentração média \nde PM2,5"),
+    id = "PM2.5_Médio"
+  ) +
+  tm_borders(lwd = 0.75, lty = "solid") +
+  labs(title = "Von Dokelar")
+
+
+```
+
+```{r echo=FALSE}
+mapa2
+```
+
+### Mapa interativo
+
+*Repare que é um mapa interativo, isto é, repousar o mouse sobre o municipio mostra informações sobre o mesmo*
+
+```{r}
+tmap_mode("view")
+
+```
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+mapa
+```
