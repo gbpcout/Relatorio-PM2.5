@@ -23,19 +23,39 @@ library(irr)
 ```{r Dados CAMS, message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
 
 # Carregar Base de dados
-dados=read.csv("PM2.5_diario_2023.csv")
-#names(dados)
-dados$Data=ymd(dados$Date)
-dados$mes=month(dados$Data)
-dados$ano=year(dados$Data)
-dados$wday=weekdays(dados$Data)
 
-dados$UF=substr(dados$Cod,1,2)
-# table(dados$UF)
-# table(dados$mes)
 
-#Subseta(Seleciona) os dados com apenas quem tem UF == 43
-rs=subset(dados,dados$UF==43)
+rs = read_csv(file = "https://github.com/gbpcout/Dashboard_PM2.5/raw/refs/heads/main/rs_pm25.csv")
+rs.donkelar = read_csv(file = "https://github.com/gbpcout/Dashboard_PM2.5/raw/refs/heads/main/rs.donkelar.csv" )
+
+
+
+
+# Nome base
+nome_base <- "RS_Municipios_2024"
+
+# Extensões do shapefile
+extensoes <- c("shp", "dbf", "shx", "prj", "cpg")
+
+# Loop para baixar
+for (ext in extensoes) {
+  url <- paste0("https://github.com/gbpcout/Dashboard_PM2.5/raw/main/", nome_base, ".", ext)
+  dest <- paste0(nome_base, ".", ext)
+  download.file(url, dest, mode = "wb")
+}
+
+# Agora pode ler o shapefile normalmente
+mapa_rs <- st_read(paste0(nome_base, ".shp"))
+
+
+
+
+
+
+
+
+
+
 
 
 #agrupa por mes
@@ -61,7 +81,6 @@ rsUF=rsmes%>%
 
 ```{r Dados Von Donkelar,include=FALSE}
 
-rs.donkelar = read_excel("dados_completos_consolidado_donkelar.xlsx")
 
 rs.donkelar = rs.donkelar %>% 
   filter(SIGLA_UF == 43)
@@ -293,7 +312,7 @@ Com os dados do teste temos que o **`r z$value`** representando uma correlação
 #   showProgress = TRUE
 # )
 
-map=read_sf("RS_Municipios_2024.shp")
+map=mapa_rs
 rsano$Cod=as.character(rsano$Cod)
 
 map=left_join(map,rsano,join_by("CD_MUN"=="Cod"))
@@ -358,7 +377,8 @@ mapa
 
 ```{r include=FALSE}
 
-map=read_sf("RS_Municipios_2024.shp")
+map=mapa_rs
+
 
 
 rs.donk.ano=rs.donkelar %>% 
